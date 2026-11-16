@@ -242,7 +242,9 @@ def _(mo):
 
         **Definitions used throughout.** An hour is *rainy* if the station recorded at
         least 0.01 inch (0.25 mm) of rain in it — the smallest amount the gauge reports; a
-        trace is treated as dry. Weekends are Saturday and Sunday. Quarters are calendar
+        trace is treated as dry. Because the gauge reports in steps of 0.01 inch, a 0.2 mm
+        cut-off and "any measurable rain" select exactly the same hours, so the result
+        does not hinge on choosing a small threshold. Weekends are Saturday and Sunday. Quarters are calendar
         quarters (Q1 = January–March).
         """
     )
