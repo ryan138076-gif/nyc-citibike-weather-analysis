@@ -155,8 +155,7 @@ def _(dst_audit, embedded_sha, hourly, local_check, mo, pd, reconciliation, vali
 
                 The table is built by `src/pipeline.py` (rides), `src/fetch_hourly_weather.py`
                 (weather) and `src/validate_hourly.py` (merge and checks) in the project
-                repository,
-                <https://github.com/ryan138076-gif/nyc-citibike-weather-analysis>. Running the
+                repository. Running the
                 three scripts in that order (commands in the comment at the top of the hidden
                 loading cell above) downloads every source file below and rebuilds the table
                 embedded in this notebook.
