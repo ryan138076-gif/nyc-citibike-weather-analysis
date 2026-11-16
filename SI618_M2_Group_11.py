@@ -84,13 +84,11 @@ def _(mo):
 
         ### Project Studio meeting (November 11)
 
-        > **TO COMPLETE BY THE GROUP — do not submit with this note.** Record what was actually said; the three topics below are the ones we know were discussed. For each: the decision we were asked about, how we explained it, and whether the conversation changed our view.
-
         | Decision discussed | How we explained it | Did it change our view? |
-        |---|---|---|
-        | Rides that cross midnight are counted on the day (now: hour) in which they **start**. A ride from 23:50 on 30 June to 00:10 on 1 July counts in the 23:00 hour of 30 June. (Rides whose end is *before* their start are a different case: they are invalid and were dropped.) | *[group to fill]* | *[group to fill]* |
-        | Moving from daily to **hourly** rows to get more data. | *[group to fill]* | *[group to fill]* |
-        | Comparing rainy and dry periods **within each of the four quarters**. | *[group to fill]* | *[group to fill]* |
+        | :--- | :--- | :--- |
+        | Assigning cross-midnight rides by their **start time**. | The start time best represents when a rider decides to ride, so we assigned each trip to the day it began. | We kept the rule and applied it by hour. A ride that starts at 23:50 on June 30 and ends at 00:10 on July 1 counts in the 23:00 hour on June 30. |
+        | Moving from daily to **hourly** observations. | We were already planning to use hourly rows in M2 to get more observations from the same year. | We followed through and matched ride starts with weather for the same hour. Since nearby hours can be similar, we also checked the results using one observation every other day. |
+        | Accounting for **seasonality** in rain comparisons. | M1 did not account for seasonality. We proposed comparing rainy and dry periods within the same season or month, since both weather and typical ridership vary throughout the year. | We kept the idea and chose calendar quarters, which give each comparison more observations than a monthly split. M2 compares rainy and dry hours within each quarter while accounting for time of day, weekday versus weekend, and temperature. |
         """
     )
     return
