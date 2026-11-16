@@ -1,0 +1,22 @@
+metric,value
+generated_on,2026-11-16
+months,1 2 3 4 5 6 7 8 9 10 11 12
+bike_archives,12
+bike_raw_rows,44303209
+bike_kept_rows,44302480
+hourly_rides_on_grid,44299265
+reconciliation_dates,366
+reconciliation_mismatched_dates,0
+m1_mismatched_dates,0
+grid_hours,8784
+grid_unique_utc_keys,8784
+fall_ambiguous_hours_set_missing,2
+fall_ambiguous_combined_rides,3215
+spring_gap_ride_starts,0
+rides_off_grid_total,0
+zero_ride_hours,0
+valid_cross_midnight_rides,207672
+nonpositive_duration_total,319
+nonpositive_on_2024_11_03,319
+nonpositive_within_repeated_0100_hour,319
+nonpositive_explained_by_one_hour_shift,319

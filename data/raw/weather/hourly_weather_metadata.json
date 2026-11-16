@@ -1,0 +1,21 @@
+{
+  "fetched_on": "2026-11-15",
+  "noaa_lcd": {
+    "url": "https://www.ncei.noaa.gov/access/services/data/v1?dataset=local-climatological-data&stations=72505394728&startDate=2024-01-01&endDate=2025-01-01&dataTypes=HourlyPrecipitation%2CHourlyDryBulbTemperature%2CREPORT_TYPE&format=csv",
+    "station": "72505394728",
+    "time_basis": "LST (UTC-5)"
+  },
+  "open_meteo": {
+    "url": "https://archive-api.open-meteo.com/v1/archive?latitude=40.7789&longitude=-73.9692&start_date=2024-01-01&end_date=2025-01-01&hourly=temperature_2m%2Cprecipitation&timezone=GMT",
+    "params": {
+      "latitude": 40.7789,
+      "longitude": -73.9692,
+      "start_date": "2024-01-01",
+      "end_date": "2025-01-01",
+      "hourly": "temperature_2m,precipitation",
+      "timezone": "GMT"
+    },
+    "precipitation_definition": "precipitation: Total precipitation (rain, showers, snow) sum of the preceding hour",
+    "model": "default best_match (not pinned)"
+  }
+}
