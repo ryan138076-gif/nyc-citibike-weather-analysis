@@ -1098,26 +1098,34 @@ def _(decisions, mo):
         ## Decision log
 
         **1. Weather source for hourly rain.**
+
         **Decision.** We used the NOAA hourly observations from the Central Park station.
+
         **Alternative.** Open-Meteo, a model-based ("reanalysis") weather series that has a
         value for every hour and no gaps.
+
         **Evidence.** The station is missing rain in only {100 - _d['lcd_coverage']:.1f}% of
         hours. Open-Meteo's nearest grid cell sits at {_d['om_lat']:.2f}, {_d['om_lon']:.2f} —
         across the Hudson in New Jersey — and smooths rain in space and time: it calls
         {_d['om_wet_share']:.1f}% of hours rainy against the station's {_d['lcd_wet_share']:.1f}%,
         and in hours where either source reports rain they disagree about whether it rained
         {_d['disagree_any_wet']:.0f}% of the time (hourly correlation {_d['precip_corr']:.2f}).
+
         **Consequence (run).** Refitting the pooled Question 1 model with Open-Meteo rain
         shrinks the rain effect from {_d['lcd_effect']:.1f}% to **{_d['om_effect']:.1f}%**:
         smoothed rain mixes dry hours into the "rainy" group and weakens the very drop
         Question 1 is about.
 
         **2. Log of rides as the outcome.**
+
         **Decision.** We modelled log(rides + 1) and report effects as percentages.
+
         **Alternative.** Modelling rides per hour directly.
+
         **Evidence.** On the raw scale the spread of the residuals in the busiest tenth of
         hours is {_d['raw_spread_ratio']:.1f} times that in the quietest tenth (log scale:
         {_d['log_spread_ratio']:.1f}), so the equal-spread assumption fails badly.
+
         **Consequence (run).** The raw model says rain removes the same
         {abs(_d['raw_rain']):,.0f} rides in every hour — more than the {_d['night_dry']:,.0f}
         rides in a typical dry 4 AM hour — and predicts a *negative* number of rides for
@@ -1125,15 +1133,19 @@ def _(decisions, mo):
         effect at every hour.
 
         **3. Comparing like with like within quarters.**
+
         **Decision.** Rainy hours are compared with dry hours of the same quarter, hour,
         kind of day and temperature.
+
         **Alternative.** A simple comparison of all rainy with all dry hours across the
         year.
+
         **Evidence.** Rain is not spread evenly. The share of hours that are rainy is
         {', '.join(f'{k} {v}%' for k, v in _d['rain_share_q'].items())}; {_d['night_share_rainy']:.0f}%
         of rainy hours fall between midnight and 6 AM against {_d['night_share_dry']:.0f}% of dry
         hours; and rainy hours average {_d['temp_rainy']:.1f} °C against {_d['temp_dry']:.1f} °C.
-        Season, time of day and temperature all affect riding on their own.  
+        Season, time of day and temperature all affect riding on their own.
+
         **Consequence (run).** The unadjusted comparison gives **{_d['unadjusted']:.1f}%**,
         against {_d['adjusted']:.1f}% for the like-for-like model — the simple comparison
         credits rain with part of the drop that is really due to the time of day and the
