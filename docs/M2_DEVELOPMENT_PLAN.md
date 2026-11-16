@@ -3,11 +3,16 @@
 **Project:** Weather and NYC Citi Bike Ridership in 2024  
 **Group:** 11 — Yanran Chen (`yanranc`), Hanyang Liu (`hanyliu`)  
 **Repository:** https://github.com/ryan138076-gif/nyc-citibike-weather-analysis  
-**Document version:** 1.1 · 2026-11-15  
+**Document version:** 1.2 · 2026-11-16  
 **Milestone deadline:** Monday, November 16, 2026, **before 3:30 PM (America/Detroit)**  
-**Status:** Development specification; analysis results are **not** yet computed.
+**Status:** Pipeline built and validated (§6.5); notebook `SI618_M2_Group_11.py` implements §7–§9.
 
 > **Scope note.** This is a repository-ready specification based on the group's M1 notebook/pipeline, M1 instructor feedback, the November 11 discussion, and the official M2 rubric. v1.1 reconciles the plan with a local checkout of the repository (`main` @ `07e0849`): paths in §4 now describe the **actual** tree plus the minimum new files.
+
+### Changes in v1.2
+
+- §6.5 added: results of the full pipeline run (all 16 gates pass) and the findings that refine the plan: the LCD source was chosen, the `≥ 0.2 mm` vs `> 0` choice is moot for LCD, Open-Meteo's grid cell lies in New Jersey, and 319/319 nonpositive durations are confirmed as DST artifacts.
+- §9 / §12: the wet-threshold decision candidate and the drizzle risk updated to match §6.5.
 
 ### Changes in v1.1
 
@@ -208,6 +213,24 @@ Implementation checkpoints:
 | Join | One-to-one keys; missing weather and effective sample sizes explicitly reported |
 | Reproducibility | Independent rerun obtains the same processed outputs from pinned inputs/settings |
 
+### 6.5 Pipeline run results (2026-11-16)
+
+Commands in §11 run end to end on all 12 monthly archives; `src/validate_hourly.py` passes **16/16 gates**. Outputs are in `data/processed/` (`hourly_bike_weather_2024.csv`, `hourly_dst_audit.csv`, `hourly_validation.csv`, `weather_source_comparison.csv`, `weather_source_coverage.csv`).
+
+| Item | Result | Effect on the plan |
+|---|---|---|
+| Rows / grid | 44,303,209 raw → 44,302,480 kept; 44,299,265 on the 8,784-hour grid; 0 rides off the grid; 0 zero-ride hours | As specified |
+| Daily reconciliation | Hourly sums = same-run daily counts and = committed M1 `daily_bike_2024.csv` on **366/366** dates | Gate met. (A January-only test run shows 2 mismatches because Jan 30–31 rides sit in the February archive; expected and irrelevant for the full year.) |
+| DST | Spring gap 03-10 02:00: 0 ride starts. Fall repeat 11-03 01:00: both elapsed hours set to NaN, **3,215** combined rides audited | Analysis N = 8,784 − 2 − hours with missing weather = **8,736** |
+| 319 nonpositive durations | **319/319** start and end inside the repeated 01:xx hour on 11-03 and are explained by the one-hour clock shift | Confirms §2.1; they stay excluded and the notebook shows the count live |
+| LCD time basis | Times verified as LST (UTC−5): 24 routine reports on both DST days, 02:51 present on 03-10 | No DST correction for weather |
+| LCD coverage | Precipitation present in 99.8% of hours (≥ 99.5% in every quarter); 17 hours missing precipitation, 46 missing temperature; 433 trace hours; 13 suspect values | **NOAA LCD chosen** by the §6.2 95% rule; Open-Meteo kept for comparison |
+| LCD vs. NOAA daily | LCD hourly sums to daily vs. M1 daily `PRCP`: r = 0.9999 (1,175.5 vs. 1,178.0 mm for the year) | Hourly station data consistent with the M1 source |
+| **Wet threshold** | LCD reports in 0.01 in (0.254 mm) steps, so `≥ 0.2 mm` and `> 0` select **identical** hours (7.96% wet) | The threshold decision is moot for the chosen source; trace counts as dry. Not used as a decision-log entry |
+| **Open-Meteo grid cell** | Request at 40.7789, −73.9692 snapped to **40.81, −74.02** (New Jersey, across the Hudson), elevation 44 m | Strengthens the LCD choice; used as evidence in decision-log entry 1 |
+| Source agreement | Wet share LCD 7.96% vs. Open-Meteo 10.9% (`≥ 0.2 mm`) / 14.9% (`> 0`); disagree on 52% of hours where either is wet; precipitation r = 0.51; temperature r = 0.98 (LCD 1.2 °C warmer on average); annual 1,176 vs. 1,318 mm | Q1 refit with Open-Meteo gives −45.5% vs. −56.5% (decision-log entry 1) |
+| Residual dependence | Q1 model residual ACF 0.77 at lag 1, 0.30 at lag 24; independent subset (17:00 every second day, N = 183) residual lag-1 ACF 0.20 | Confirms the §7.1 independence handling |
+
 ## 7. Statistical analysis plan for three research questions
 
 **Rubric constraints that shape this section** (official M2 page): methods come from topics 04–07 (descriptive statistics and plots, correlation, t-tests, ANOVA, linear regression, contingency tables/chi-square); "we will grade how well you answer your questions, not how many techniques you use"; every test in topics 05–06 assumes independent rows, so dependent data must either be tested on an independent version of the data or the effect of dependence on the p-value must be explained; with many rows "the answer depends on the effect size, and on whether it is big enough to matter". Hence: **one primary linear regression per question, one independent-subset check, effect size first**, and only the alternatives that feed the decision log.
@@ -334,7 +357,7 @@ If the data or a cleaning rule changes upstream, the log updates with it. The al
 | Q3: include rainfall × weekend interaction | Model only additive rain and weekend effects | Interaction coefficient, p-value, fit comparison and group contrasts | Compare predicted weekday/weekend rain contrasts with/without interaction |
 | Transformation: `log(rides+1)` outcome | Raw rides/hour outcome | Residual-vs-fitted spread, rain effect at 04:00 vs. 17:00 under each scale | Fit both; show the raw-scale model's fan-shaped residuals and hour-inconsistent effects |
 | Data source: station (NOAA LCD) vs. reanalysis (Open-Meteo) hourly rain | The other source | Hourly coverage; share of hours where the sources disagree on wet/dry | Re-run Q1 with the other source; show how the rain effect changes |
-| Subset: wet hour = `≥ 0.2 mm` | wet hour = `> 0 mm` | Share of hours classed wet under each rule; histogram of hourly precipitation | Re-run Q1 with `> 0`; show how many hours move and how the rain effect changes |
+| ~~Subset: wet hour = `≥ 0.2 mm`~~ | ~~wet hour = `> 0 mm`~~ | Dropped after §6.5: for LCD both rules select identical hours, so there is no consequence to show | — |
 | Assumption: independence handled by explanation + independent subset (one 17:00 row every second day) | Report full-data p-values as if hours were independent | Residual lag-1/lag-24 autocorrelation in full data vs. subset | Show full-data and subset estimates, SEs and p-values side by side |
 
 The rubric asks for entries "drawn from your analysis: which test you chose, which subset you compared, which transformation you applied, or how you handled an assumption that did not hold". Pick the **three most informative** of these candidates (the last three map directly onto that list), not predetermined conclusions. If the data favor an alternative, document the actual selection. Do not invent evidence values before analysis.
@@ -381,7 +404,7 @@ uvx marimo export html --sandbox SI618_M2_Group_11.py -o SI618_M2_Group_11.html
 | 2024 ZIPs (8+ GB) not on disk; download + 44 M-row pass may not finish in time | No hourly bike data → Q1–Q3 cannot be answered at hourly grain | Start the download first; develop on one month while it runs; never reverse-engineer hourly shares from daily totals |
 | Weather source choice (station vs. reanalysis) | Smoothed rain weakens the rain effect; station gaps reduce N | Fetch both, apply the §6.2 decision rule, report the comparison; compare daily aggregates (LST window) with M1's NOAA daily data |
 | Provider hourly precipitation time convention | One-hour misalignment between rain and rides | Open-Meteo = preceding-hour sum → shift by one hour (§6.2); confirm in docs at fetch time; spot-check a storm |
-| Reanalysis drizzle hours | Too many hours classed "wet", diluting the rain effect | `≥ 0.2 mm` primary threshold with `> 0` sensitivity |
+| Reanalysis drizzle hours | Too many hours classed "wet", diluting the rain effect | **Resolved (§6.5):** LCD station data used; at its 0.01 in resolution `≥ 0.2 mm` = `> 0`, so no sensitivity run is needed |
 | Ambiguous NYC fall-DST hour with naive trip timestamps | Fake doubled hour + fake empty hour if zero-filled | Both ambiguous hours set to NaN, combined count in audit (§6.1) |
 | Missing `scipy`/`statsmodels` in sandbox export | Export fails or cells error | Add to requirements and notebook script metadata; open the HTML |
 | Weather and rides have autocorrelation | Full-data p-values too optimistic | Show residual autocorrelation; interpret via effect size; re-test on the independent subset (§7.1) |
