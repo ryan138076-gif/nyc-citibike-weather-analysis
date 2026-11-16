@@ -58,8 +58,11 @@ def _(mo):
         # Title and group
 
         **Working title:** Rain, Temperature and Hourly NYC Citi Bike Ridership in 2024
+
         **Group name:** Group 11
+
         **Group members:**
+
         - Yanran Chen — **uniqname:** yanranc
         - Hanyang Liu — **uniqname:** hanyliu
         """
@@ -152,7 +155,22 @@ def _(dst_audit, embedded_sha, hourly, local_check, mo, pd, reconciliation, vali
 
                 The table is built by `src/pipeline.py` (rides), `src/fetch_hourly_weather.py`
                 (weather) and `src/validate_hourly.py` (merge and checks) in the project
-                repository. The main steps and the numbers they produced:
+                repository,
+                <https://github.com/ryan138076-gif/nyc-citibike-weather-analysis>. Running the
+                three scripts in that order (commands in the comment at the top of the hidden
+                loading cell above) downloads every source file below and rebuilds the table
+                embedded in this notebook.
+
+                **Where each source file comes from** (all public, no account needed):
+
+                | Data | Source | How to obtain it |
+                |---|---|---|
+                | Citi Bike rides, 2024 | [Citi Bike system data](https://citibikenyc.com/system-data) | The 12 monthly archives `202401-citibike-tripdata.zip` to `202412-citibike-tripdata.zip` from the official bucket <https://s3.amazonaws.com/tripdata/index.html>, e.g. <https://s3.amazonaws.com/tripdata/202407-citibike-tripdata.zip>. |
+                | Hourly weather, Central Park | NOAA NCEI Local Climatological Data, station `72505394728` (WBAN 94728) | [This API request](https://www.ncei.noaa.gov/access/services/data/v1?dataset=local-climatological-data&stations=72505394728&startDate=2024-01-01&endDate=2025-01-01&dataTypes=HourlyPrecipitation,HourlyDryBulbTemperature,REPORT_TYPE&format=csv) returns the CSV we used. |
+                | Daily weather, Central Park (Milestone 1 table, used to check the hourly rain) | NOAA NCEI Daily Summaries, station `USW00094728` | [This API request](https://www.ncei.noaa.gov/access/services/data/v1?dataset=daily-summaries&stations=USW00094728&startDate=2024-01-01&endDate=2024-12-31&dataTypes=PRCP,TMAX,TMIN&units=metric&format=csv). |
+                | Model-based hourly weather (comparison only, Decision log entry 1) | Open-Meteo historical archive | [This API request](https://archive-api.open-meteo.com/v1/archive?latitude=40.7789&longitude=-73.9692&start_date=2024-01-01&end_date=2025-01-01&hourly=temperature_2m,precipitation&timezone=GMT). |
+
+                The main steps and the numbers they produced:
 
                 **1. Rides — the Milestone 1 cleaning, unchanged.** All 12 official 2024
                 monthly archives are streamed in 200,000-row chunks. A ride is kept if it has a
@@ -614,6 +632,25 @@ def _(mo, q1_summary, typical_peak):
 
 
 @app.cell
+def _(np, plt, sm):
+    def diagnostic_plot(model, acf_values, title):
+        """Residuals vs fitted, normal Q-Q plot and residual autocorrelation for one model."""
+        fig, ax = plt.subplots(1, 3, figsize=(13, 3.6))
+        ax[0].scatter(model.fittedvalues, model.resid, s=3, alpha=0.25)
+        ax[0].axhline(0, color="black", lw=0.8)
+        ax[0].set(xlabel="Fitted log(rides + 1)", ylabel="Residual", title="Residuals vs fitted")
+        sm.qqplot(model.resid, line="s", ax=ax[1], markersize=2, alpha=0.4)
+        ax[1].set_title("Normal Q–Q plot of residuals")
+        ax[2].bar(np.arange(1, 25), acf_values[1:25])
+        ax[2].set(xlabel="Lag (hours)", ylabel="Autocorrelation", title="Residual autocorrelation")
+        fig.suptitle(title, y=1.02)
+        fig.tight_layout()
+        return fig
+
+    return (diagnostic_plot,)
+
+
+@app.cell
 def _(mo):
     mo.md(
         r"""
@@ -624,11 +661,13 @@ def _(mo):
 
 
 @app.cell
-def _(CONTROLS, analysis, np, smf, subset, temp_mean):
+def _(CONTROLS, acf, analysis, np, smf, subset, temp_mean):
     q2_linear = smf.ols(f"log_rides ~ tc + C(quarter) + {CONTROLS} + rain", data=analysis).fit()
     q2_quad = smf.ols(f"log_rides ~ tc + tc2 + C(quarter) + {CONTROLS} + rain", data=analysis).fit()
     q2_no_quarter = smf.ols(f"log_rides ~ tc + tc2 + {CONTROLS} + rain", data=analysis).fit()
     q2_subset = smf.ols("log_rides ~ tc + tc2 + rain + weekend + C(quarter)", data=subset).fit()
+    q2_acf = acf(q2_quad.resid.to_numpy(), nlags=24)
+    q2_subset_acf1 = float(acf(q2_subset.resid.to_numpy(), nlags=1)[1])
 
     _b1, _b2 = q2_quad.params["tc"], q2_quad.params["tc2"]
     _cov = q2_quad.cov_params().loc[["tc", "tc2"], ["tc", "tc2"]].to_numpy()
@@ -644,11 +683,11 @@ def _(CONTROLS, analysis, np, smf, subset, temp_mean):
             return model.params["tc"] * x + model.params.get("tc2", 0.0) * x**2
         return 100 * (np.exp(part(temp) - part(ref)) - 1)
 
-    return q2_linear, q2_no_quarter, q2_quad, q2_subset, q2_turn, q2_turn_ci, temp_effect
+    return q2_acf, q2_linear, q2_no_quarter, q2_quad, q2_subset, q2_subset_acf1, q2_turn, q2_turn_ci, temp_effect
 
 
 @app.cell
-def _(analysis, mo):
+def _(analysis, mo, q2_acf, q2_subset, q2_subset_acf1):
     mo.md(
         f"""
         ### Approach
@@ -667,14 +706,33 @@ def _(analysis, mo):
         commuting. Because temperature and quarter move together, we also refit without the
         quarter terms and compare.
 
-        **Assumptions and checks.** The model is the Question 1 model with one rain effect
-        instead of four, so the same diagnostics apply: no strong pattern in the residuals,
-        heavy tails, and strong hour-to-hour dependence. As in Question 1 we read the answer
-        from the size and shape of the curve, and repeat the test on the independent
-        subset. We only describe the curve within the observed range
+        **Assumptions and checks** (plots below, for the model with the squared term):
+        - *Linearity:* the squared term is itself the check on a straight-line temperature
+          effect, and the Result plots the fitted curve against binned residuals to show
+          the curve follows the data.
+        - *Equal spread:* residuals are centred on zero across the fitted values with no
+          curve left over, but the spread is not perfectly equal — it is somewhat wider in
+          quiet hours than in the busiest ones.
+        - *Normality:* the Q–Q plot has a long lower tail (hours with far fewer rides than
+          predicted, such as storms and holidays). With {len(analysis):,} hours the t-test
+          is not sensitive to this.
+        - *Independence — does not hold.* Residual autocorrelation is **{q2_acf[1]:.2f}** one
+          hour apart and **{q2_acf[24]:.2f}** one day apart, so the full-data p-value is too
+          small. We read the answer from the size and shape of the curve and repeat the
+          test on the independent subset ({int(q2_subset.nobs)} rows: 17:00, every second
+          day), where the autocorrelation between consecutive rows falls to
+          **{q2_subset_acf1:.2f}**.
+
+        We only describe the curve within the observed range
         ({analysis['temperature_c'].min():.0f} to {analysis['temperature_c'].max():.0f} °C).
         """
     )
+    return
+
+
+@app.cell
+def _(diagnostic_plot, q2_acf, q2_quad):
+    diagnostic_plot(q2_quad, q2_acf, "Q2 model diagnostics (quadratic temperature)")
     return
 
 
@@ -784,7 +842,7 @@ def _(mo):
 
 
 @app.cell
-def _(CONTROLS, analysis, smf, subset):
+def _(CONTROLS, acf, analysis, smf, subset):
     q3_model = smf.ols(
         f"log_rides ~ rain * weekend + C(quarter) + {CONTROLS} + tc + tc2", data=analysis
     ).fit()
@@ -796,11 +854,13 @@ def _(CONTROLS, analysis, smf, subset):
         .replace({"weekend": {0: "weekday", 1: "weekend"}, "rain": {0: "dry", 1: "rainy"}})
     )
     q3_subset_cells = subset.groupby(["weekend", "rain"]).size()
-    return q3_cells, q3_model, q3_subset, q3_subset_cells
+    q3_acf = acf(q3_model.resid.to_numpy(), nlags=24)
+    q3_subset_acf1 = float(acf(q3_subset.resid.to_numpy(), nlags=1)[1])
+    return q3_acf, q3_cells, q3_model, q3_subset, q3_subset_acf1, q3_subset_cells
 
 
 @app.cell
-def _(mo, q3_subset_cells):
+def _(mo, q3_acf, q3_model, q3_subset, q3_subset_acf1, q3_subset_cells):
     mo.md(
         f"""
         ### Approach
@@ -817,14 +877,29 @@ def _(mo, q3_subset_cells):
         weekdays and weekends as % changes. A difference in percentages can disagree with a
         difference in absolute rides, because weekday peaks are larger; we give both.
 
-        **Assumptions and checks.** Same model family and diagnostics as Question 1:
-        acceptable residual pattern, heavy tails, strong dependence between consecutive
-        hours, so we read the effect size and re-test on the independent subset. Rainy
-        weekend hours are the smallest group (counts in the Result); in the independent
-        subset there are only **{int(q3_subset_cells.get((1, 1), 0))}**, which makes the
-        subset test weak.
+        **Assumptions and checks** (plots below, for the interaction model):
+        - *Linearity and equal spread:* residuals are centred on zero across the fitted
+          values with no curve left over; the spread is somewhat wider in quiet hours than
+          in the busiest ones.
+        - *Normality:* the Q–Q plot again has a long lower tail (hours with far fewer rides
+          than predicted); with {int(q3_model.nobs):,} hours the t-test is not sensitive to
+          this.
+        - *Independence — does not hold.* Residual autocorrelation is **{q3_acf[1]:.2f}** one
+          hour apart and **{q3_acf[24]:.2f}** one day apart, so the full-data p-value is too
+          small. We read the effect size and re-test on the independent subset
+          ({int(q3_subset.nobs)} rows), where the autocorrelation between consecutive rows is
+          **{q3_subset_acf1:.2f}**.
+        - *Enough rows in each group.* Rainy weekend hours are the smallest group (counts
+          in the Result); in the independent subset there are only
+          **{int(q3_subset_cells.get((1, 1), 0))}**, which makes the subset test weak.
         """
     )
+    return
+
+
+@app.cell
+def _(diagnostic_plot, q3_acf, q3_model):
+    diagnostic_plot(q3_model, q3_acf, "Q3 model diagnostics (rain × weekend)")
     return
 
 
