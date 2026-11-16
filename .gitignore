@@ -1,0 +1,9 @@
+__pycache__/
+.venv/
+.uv-cache/
+.ipynb_checkpoints/
+__marimo__/
+.DS_Store
+.Rhistory
+data/raw/
+data/processed/
