@@ -1,0 +1,17 @@
+gate,passed,detail
+unique UTC keys,True,8784
+"8,784 elapsed hours",True,8784
+spring DST day has 23 hours,True,23
+fall DST day has 25 hours,True,25
+"fall-ambiguous hours are missing, not zero",True,"[<NA>, <NA>]"
+every other day has 24 hours,True,{24: 364}
+bike counts only missing at DST-ambiguous hours,True,2
+every hour joined to the weather grid,True,"{'both': 8784, 'left_only': 0, 'right_only': 0}"
+hourly sums reconcile with the same-run daily counts,True,0
+daily counts equal the committed M1 daily table,True,0
+no rides off the grid except audited DST hours,True,"off-grid 0, spring gap 0"
+no negative precipitation,True,0.0
+plausible temperatures (-30 to 45 C),True,"(-10.555555555555555, 34.44444444444444)"
+missing rain kept as NaN (not 0),True,17
+member + casual <= total,True,
+weather source chosen by coverage rule,True,noaa_lcd

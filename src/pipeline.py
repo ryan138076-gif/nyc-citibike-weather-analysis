@@ -1,8 +1,15 @@
-"""Reproducible Citi Bike + NOAA processing for SI 618 Milestone 1.
+"""Reproducible Citi Bike + NOAA processing for SI 618 Milestones 1 and 2.
 
 The pipeline streams every CSV member in each official monthly ZIP, performs
 exact cross-chunk/cross-file ride-ID deduplication with SQLite, aggregates valid
 trips to calendar days, and joins the result one-to-one to Central Park weather.
+
+``--grain hourly`` (Milestone 2) runs the identical cleaning pass but also counts
+valid rides by the local clock hour of ``started_at`` and places them on the
+8,784-hour UTC grid of 2024. Citi Bike timestamps carry no UTC offset, so the
+repeated 01:00 hour of 2024-11-03 cannot be split: both elapsed hours are left
+missing (never zero) and their combined count is audited. The M1 daily outputs
+are not rewritten in hourly mode.
 """
 from __future__ import annotations
 
@@ -30,6 +37,9 @@ WEATHER_URL = (
 USECOLS = ["ride_id", "started_at", "ended_at", "member_casual"]
 STUDY_START = pd.Timestamp("2024-01-01")
 STUDY_END = pd.Timestamp("2024-12-31")
+LOCAL_TZ = "America/New_York"
+SPRING_GAP_HOUR = pd.Timestamp("2024-03-10 02:00")  # naive local hour that never occurred
+FALL_REPEAT_HOUR = pd.Timestamp("2024-11-03 01:00")  # naive local hour that occurred twice
 
 
 def download_weather() -> Path:
@@ -75,20 +85,28 @@ def _counter_frame(counter: Counter, value_name: str) -> pd.DataFrame:
 
 
 def aggregate_trips(
-    paths: list[Path], chunksize: int = 200_000
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    paths: list[Path], chunksize: int = 200_000, hourly: bool = False
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     """Stream and clean all trip CSVs, returning daily data and live audits.
 
     A temporary SQLite table provides exact global ID uniqueness without holding
     tens of millions of IDs in RAM. Two genuine alternatives are calculated in
     the same pass: counting any parseable trip start without the duration/ID
     validity rule, and assigning valid trips to their end date instead.
+
+    With ``hourly=True`` the same valid trips are also counted by the naive local
+    hour of ``started_at``; the fifth return value then holds those counters and
+    a DST audit. The eligibility rules are not changed.
     """
     counts: Counter = Counter()
     members: Counter = Counter()
     casuals: Counter = Counter()
     naive_start_counts: Counter = Counter()
     end_date_counts: Counter = Counter()
+    hour_counts: Counter = Counter()
+    hour_members: Counter = Counter()
+    hour_casuals: Counter = Counter()
+    dst_audit: Counter = Counter()
     audit_rows: list[dict] = []
     inventory_rows: list[dict] = []
 
@@ -161,9 +179,28 @@ def aggregate_trips(
                             candidate = chunk.dropna(
                                 subset=["ride_id", "started_at", "ended_at"]
                             ).copy()
-                            nonpositive_duration = int(
-                                (candidate["ended_at"] <= candidate["started_at"]).sum()
-                            )
+                            nonpositive_mask = candidate["ended_at"] <= candidate["started_at"]
+                            nonpositive_duration = int(nonpositive_mask.sum())
+                            if hourly and nonpositive_duration:
+                                bad = candidate[nonpositive_mask]
+                                start_hour = bad["started_at"].dt.floor("h")
+                                end_hour = bad["ended_at"].dt.floor("h")
+                                dst_audit["nonpositive_duration_total"] += nonpositive_duration
+                                dst_audit["nonpositive_on_2024_11_03"] += int(
+                                    bad["started_at"].dt.normalize().eq(
+                                        FALL_REPEAT_HOUR.normalize()
+                                    ).sum()
+                                )
+                                dst_audit["nonpositive_within_repeated_0100_hour"] += int(
+                                    (start_hour.eq(FALL_REPEAT_HOUR) & end_hour.eq(FALL_REPEAT_HOUR)).sum()
+                                )
+                                # A plausible clock-change ride: ends < 1 h "before" it starts.
+                                dst_audit["nonpositive_explained_by_one_hour_shift"] += int(
+                                    (
+                                        start_hour.eq(FALL_REPEAT_HOUR)
+                                        & (bad["ended_at"] + pd.Timedelta(hours=1) > bad["started_at"])
+                                    ).sum()
+                                )
                             candidate = candidate[
                                 candidate["ended_at"] > candidate["started_at"]
                             ].copy()
@@ -219,6 +256,26 @@ def aggregate_trips(
                                 end_dates.between(STUDY_START, STUDY_END)
                             ].dt.strftime("%Y-%m-%d")
                             end_date_counts.update(end_dates.value_counts().to_dict())
+                            if hourly:
+                                start_hours = candidate["started_at"].dt.floor("h")
+                                hour_counts.update(start_hours.value_counts().to_dict())
+                                hour_members.update(
+                                    start_hours[
+                                        candidate["member_casual"].eq("member")
+                                    ].value_counts().to_dict()
+                                )
+                                hour_casuals.update(
+                                    start_hours[
+                                        candidate["member_casual"].eq("casual")
+                                    ].value_counts().to_dict()
+                                )
+                                cross_midnight = (
+                                    candidate["ended_at"].dt.normalize()
+                                    > candidate["date"]
+                                )
+                                dst_audit["valid_cross_midnight_rides"] += int(
+                                    cross_midnight.sum()
+                                )
                             file_kept_rows += len(candidate)
 
                             audit_rows.append(
@@ -282,7 +339,103 @@ def aggregate_trips(
             .fillna(0)
             .astype(int)
         )
-    return daily, pd.DataFrame(audit_rows), pd.DataFrame(inventory_rows), alternatives
+    hourly_parts = {
+        "rides": hour_counts,
+        "member": hour_members,
+        "casual": hour_casuals,
+        "dst_audit": dict(dst_audit),
+    }
+    return (
+        daily,
+        pd.DataFrame(audit_rows),
+        pd.DataFrame(inventory_rows),
+        alternatives,
+        hourly_parts,
+    )
+
+
+def build_hourly(
+    hourly_parts: dict, months: tuple[int, ...]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Place naive-local-hour counts on the elapsed-hour UTC grid of the study months.
+
+    Returns the hourly bike table and a one-row DST/coverage audit. Hours inside
+    the processed months with no valid ride start are true zeros; the two
+    elapsed hours that share the naive label 2024-11-03 01:00 are NaN.
+    """
+    first = pd.Timestamp(f"2024-{min(months):02d}-01")
+    last = pd.Timestamp(f"2024-{max(months):02d}-01") + pd.offsets.MonthBegin()
+    utc = pd.date_range(
+        first.tz_localize(LOCAL_TZ).tz_convert("UTC"),
+        last.tz_localize(LOCAL_TZ).tz_convert("UTC"),
+        freq="h",
+        inclusive="left",
+    )
+    local = utc.tz_convert(LOCAL_TZ)
+    naive_local = local.tz_localize(None)
+    table = pd.DataFrame(
+        {
+            "hour_start_utc": utc,
+            "hour_start_local": local,
+            "date_local": naive_local.normalize(),
+            "hour_of_day": naive_local.hour,
+        }
+    )
+    # Only complete months are processed, so every hour of a processed month is in coverage.
+    table = table[table["date_local"].dt.month.isin(months)].reset_index(drop=True)
+    naive_key = table["hour_start_local"].dt.tz_localize(None)
+    for column, counter in (
+        ("hourly_rides", hourly_parts["rides"]),
+        ("member_rides", hourly_parts["member"]),
+        ("casual_rides", hourly_parts["casual"]),
+    ):
+        table[column] = naive_key.map(counter).fillna(0).astype("Int64")
+
+    ambiguous = naive_key.eq(FALL_REPEAT_HOUR)
+    table["dst_flag"] = "none"
+    table.loc[ambiguous, "dst_flag"] = "fall_ambiguous"
+    table.loc[ambiguous, ["hourly_rides", "member_rides", "casual_rides"]] = pd.NA
+
+    grid_keys = set(naive_key)
+    off_grid = {
+        hour: n for hour, n in hourly_parts["rides"].items() if hour not in grid_keys
+    }
+    audit = {
+        "grid_hours": len(table),
+        "grid_unique_utc_keys": int(table["hour_start_utc"].nunique()),
+        "fall_ambiguous_hours_set_missing": int(ambiguous.sum()),
+        "fall_ambiguous_combined_rides": int(hourly_parts["rides"].get(FALL_REPEAT_HOUR, 0)),
+        "spring_gap_ride_starts": int(hourly_parts["rides"].get(SPRING_GAP_HOUR, 0)),
+        "rides_off_grid_total": int(sum(off_grid.values())),
+        "zero_ride_hours": int(table["hourly_rides"].eq(0).sum()),
+        **{k: int(v) for k, v in hourly_parts["dst_audit"].items()},
+    }
+    return table, pd.DataFrame([audit])
+
+
+def reconcile_with_daily(
+    hourly_table: pd.DataFrame, hourly_parts: dict, daily: pd.DataFrame
+) -> pd.DataFrame:
+    """Compare hourly counts summed by local date with the daily counts.
+
+    Rides that are not on the grid (the fall-ambiguous hour, any spring-gap
+    starts) are added back from the counters, so a correct build matches exactly.
+    """
+    by_date = (
+        hourly_table.groupby("date_local")["hourly_rides"].sum(min_count=1).astype("Int64")
+    )
+    grid_keys = set(hourly_table["hour_start_local"].dt.tz_localize(None))
+    added = Counter()
+    for hour, n in hourly_parts["rides"].items():
+        if hour not in grid_keys or hour == FALL_REPEAT_HOUR:
+            added[hour.normalize()] += n
+    result = daily[["date", "daily_rides"]].rename(columns={"date": "date_local"}).copy()
+    result["hourly_sum"] = result["date_local"].map(by_date).fillna(0).astype(int)
+    result["off_grid_or_ambiguous"] = result["date_local"].map(added).fillna(0).astype(int)
+    result["difference"] = (
+        result["hourly_sum"] + result["off_grid_or_ambiguous"] - result["daily_rides"]
+    )
+    return result
 
 
 def load_weather(path: Path) -> tuple[pd.DataFrame, dict]:
@@ -437,9 +590,53 @@ def _build_data_description(
     return pd.DataFrame(rows)
 
 
+def run_hourly(
+    archives: list[Path], months: tuple[int, ...]
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """M2: hourly ride counts from the unchanged M1 cleaning pass."""
+    m1_daily_path = PROCESSED / "daily_bike_2024.csv"
+    m1_daily = (
+        pd.read_csv(m1_daily_path, parse_dates=["date"]) if m1_daily_path.exists() else None
+    )
+    daily, trip_audit, _, _, hourly_parts = aggregate_trips(archives, hourly=True)
+    hourly_table, dst_audit = build_hourly(hourly_parts, months)
+    reconciliation = reconcile_with_daily(hourly_table, hourly_parts, daily)
+    if m1_daily is not None:
+        m1 = m1_daily.set_index("date")["daily_rides"]
+        reconciliation["m1_daily_rides"] = reconciliation["date_local"].map(m1).astype("Int64")
+        reconciliation["matches_m1"] = reconciliation["daily_rides"].eq(
+            reconciliation["m1_daily_rides"]
+        )
+    audit = {
+        "generated_on": date.today().isoformat(),
+        "months": " ".join(map(str, months)),
+        "bike_archives": len(archives),
+        "bike_raw_rows": int(trip_audit["raw_rows"].sum()),
+        "bike_kept_rows": int(trip_audit["kept_rows"].sum()),
+        "hourly_rides_on_grid": int(hourly_table["hourly_rides"].sum()),
+        "reconciliation_dates": len(reconciliation),
+        "reconciliation_mismatched_dates": int(reconciliation["difference"].ne(0).sum()),
+        "m1_mismatched_dates": (
+            int((~reconciliation["matches_m1"]).sum()) if m1_daily is not None else -1
+        ),
+        **dst_audit.iloc[0].to_dict(),
+    }
+    out = hourly_table.copy()
+    for column in ("hour_start_utc", "hour_start_local"):
+        out[column] = out[column].map(lambda ts: ts.isoformat())
+    out["date_local"] = out["date_local"].dt.strftime("%Y-%m-%d")
+    out.to_csv(PROCESSED / "hourly_bike_2024.csv", index=False)
+    reconciliation.to_csv(PROCESSED / "hourly_daily_reconciliation.csv", index=False)
+    pd.Series(audit, name="value").rename_axis("metric").to_csv(
+        PROCESSED / "hourly_dst_audit.csv"
+    )
+    return hourly_table, trip_audit, audit
+
+
 def run(
     months: tuple[int, ...] | list[int] = tuple(range(1, 13)),
     download: bool = False,
+    grain: str = "daily",
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Run the complete pipeline and persist analysis plus audit outputs."""
     PROCESSED.mkdir(parents=True, exist_ok=True)
@@ -462,11 +659,13 @@ def run(
         raise FileNotFoundError(
             f"Missing Citi Bike ZIPs for months {missing}; rerun with --download"
         )
+    if grain == "hourly":
+        return run_hourly([path for path in archives if path is not None], months)
     weather_path = download_weather() if download else RAW_WEATHER / "noaa_2024.csv"
     if not weather_path.exists():
         raise FileNotFoundError("Missing NOAA weather CSV; rerun with --download")
 
-    daily, trip_audit, inventory, alternatives = aggregate_trips(
+    daily, trip_audit, inventory, alternatives, _ = aggregate_trips(
         [path for path in archives if path is not None]
     )
     weather, weather_audit = load_weather(weather_path)
@@ -508,9 +707,15 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--months", nargs="+", type=int, default=list(range(1, 13)))
     parser.add_argument("--download", action="store_true")
+    parser.add_argument(
+        "--grain",
+        choices=["daily", "hourly"],
+        default="daily",
+        help="daily = M1 outputs; hourly = M2 hourly counts (M1 files untouched)",
+    )
     args = parser.parse_args()
-    merged, cleaning, audit = run(args.months, args.download)
-    print(f"Daily table: {merged.shape}")
+    merged, cleaning, audit = run(args.months, args.download, args.grain)
+    print(f"{args.grain.capitalize()} table: {merged.shape}")
     print(f"Trip chunks audited: {len(cleaning):,}")
     print(pd.Series(audit).to_string())
 
