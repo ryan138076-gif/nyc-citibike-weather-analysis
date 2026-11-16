@@ -1,0 +1,20 @@
+dataset,rows,columns,row_grain,field,dtype_after_cleaning,unit,missing_n,missing_pct
+Citi Bike raw trips,44303209,13,one recorded ride,ride_id,string,identifier,0,0.0
+Citi Bike raw trips,44303209,13,one recorded ride,started_at,datetime64[ns],NYC local timestamp,0,0.0
+Citi Bike raw trips,44303209,13,one recorded ride,ended_at,datetime64[ns],NYC local timestamp,0,0.0
+Citi Bike raw trips,44303209,13,one recorded ride,member_casual,category,member/casual,0,0.0
+NOAA Central Park daily weather,366,5,one station-date,date,datetime64[ns],calendar date,0,0.0
+NOAA Central Park daily weather,366,5,one station-date,prcp_mm,float64,millimeters,0,0.0
+NOAA Central Park daily weather,366,5,one station-date,tmax_c,float64,degrees Celsius,0,0.0
+NOAA Central Park daily weather,366,5,one station-date,tmin_c,float64,degrees Celsius,0,0.0
+NOAA Central Park daily weather,366,5,one station-date,avg_temp_c,float64,degrees Celsius; (TMAX+TMIN)/2,0,0.0
+Merged daily analysis table,366,11,one calendar date,date,datetime64[ns],calendar date,0,0.0
+Merged daily analysis table,366,11,one calendar date,daily_rides,int64,rides started per day,0,0.0
+Merged daily analysis table,366,11,one calendar date,member_rides,int64,member rides started per day,0,0.0
+Merged daily analysis table,366,11,one calendar date,casual_rides,int64,casual rides started per day,0,0.0
+Merged daily analysis table,366,11,one calendar date,prcp_mm,float64,millimeters,0,0.0
+Merged daily analysis table,366,11,one calendar date,tmax_c,float64,degrees Celsius,0,0.0
+Merged daily analysis table,366,11,one calendar date,tmin_c,float64,degrees Celsius,0,0.0
+Merged daily analysis table,366,11,one calendar date,avg_temp_c,float64,degrees Celsius; (TMAX+TMIN)/2,0,0.0
+Merged daily analysis table,366,11,one calendar date,is_weekend,bool,Boolean; Saturday/Sunday,0,0.0
+Merged daily analysis table,366,11,one calendar date,month,int32,calendar month number,0,0.0

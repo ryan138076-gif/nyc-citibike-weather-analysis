@@ -59,9 +59,12 @@ UV_CACHE_DIR=.uv-cache uvx marimo export html --sandbox \
   SI618_M1_Group_11.py -o reports/SI618_M1_Group_11.html
 ```
 
-## Files produced by the pipeline
+## Data included in the repository
 
+- `data/raw/weather/noaa_2024.csv` — NOAA Central Park daily weather extract.
 - `data/processed/daily_bike_weather_2024.csv` — one row per calendar date.
+- `data/processed/daily_bike_2024.csv` — daily totals by rider type.
+- `data/processed/daily_weather_2024.csv` — cleaned daily weather observations.
 - `data/processed/trip_cleaning_audit.csv` — chunk-level cleaning evidence.
 - `data/processed/source_inventory.csv` — every ZIP/CSV member and row count.
 - `data/processed/merge_audit.csv` — date coverage, matched/unmatched counts, missingness.
@@ -69,8 +72,9 @@ UV_CACHE_DIR=.uv-cache uvx marimo export html --sandbox \
 - `data/processed/decision_alternatives.csv` — executed alternatives used by the
   decision log (naive validity rule and trip end-date assignment).
 
-Raw and processed data remain ignored by Git because the Citi Bike source files are
-large and the data-use policy restricts redistribution as a stand-alone dataset.
+The raw Citi Bike ZIPs are downloaded separately and kept in `data/raw/citibike/`.
+Run the pipeline with `--download` as shown above to obtain those archives from the
+official source and rebuild the processed CSVs.
 
 ## Limitations
 
