@@ -80,7 +80,7 @@ def _(mo):
         | The proposal and the 44-million-ride cleaning were praised. | Nothing to change. We kept every Milestone 1 cleaning rule, so the population of rides is identical (verified below, date by date). |
         | **Season:** rain, temperature and ridership all change through the year — how will we compare rainy and dry periods "that are otherwise alike"? | Every rain comparison is now made **within each calendar quarter** (Q1–Q4), and in a regression that also holds fixed the **hour of the day separately for weekdays and weekends** and the **temperature**. Rainy and dry hours are therefore compared at the same time of day, on the same kind of day, in the same quarter, at the same temperature. Holidays, events and growth of the system within a quarter are still not controlled; we say so in each answer. |
         | **Sample size:** 366 daily rows is small; add earlier years or model by hour. | We moved to **hourly** data: 8,784 hours with hourly station weather. We considered adding 2022–2023 instead, but kept 2024 only so Milestone 2 answers the same questions on the same rides as Milestone 1; an earlier year is the natural held-out test set for Milestone 3. More rows are not more *independent* rows: consecutive hours are correlated, and each question's Approach explains how we handle that. |
-        | **Show the cleaning code** so a reader can see how the table was built. | The section *How the hourly table was built* below shows the main cleaning steps, the code that does them, and the audit numbers they produced, all computed rather than typed. |
+        | **Show the cleaning code** so a reader can see how the table was built. | The section *How the hourly table was built* below walks through the steps with the code that does them: the Milestone 1 cleaning and how it produced the **daily** table (count by start date, one-to-one join with NOAA by date), the new hourly counts, the hourly weather processing, and a worked example of a ride that crosses midnight. The audit numbers in that section are computed from the data, not typed. |
 
         ### Project Studio meeting (November 11)
 
@@ -194,22 +194,100 @@ def _(dst_audit, embedded_sha, hourly, local_check, mo, pd, reconciliation, vali
             ),
             mo.md(
                 r"""
-                The core of the cleaning, from `src/pipeline.py` (abridged):
+                **The code behind these steps** (abridged from the repository; the full
+                scripts also write the audit files used above).
+
+                *Rides — Milestone 1 cleaning and the new hourly count* (`src/pipeline.py`,
+                run in 200,000-row chunks):
 
                 ```python
                 chunk["started_at"] = pd.to_datetime(chunk["started_at"], errors="coerce", format="mixed")
                 chunk["ended_at"] = pd.to_datetime(chunk["ended_at"], errors="coerce", format="mixed")
                 candidate = chunk.dropna(subset=["ride_id", "started_at", "ended_at"])
                 candidate = candidate[candidate["ended_at"] > candidate["started_at"]]       # positive duration
-                candidate = candidate[candidate["started_at"].dt.normalize().between(STUDY_START, STUDY_END)]
+                candidate["date"] = candidate["started_at"].dt.normalize()                   # start date
+                candidate = candidate[candidate["date"].between(STUDY_START, STUDY_END)]     # starts in 2024
                 candidate = candidate.drop_duplicates(subset=["ride_id"])                    # within chunk
                 candidate = candidate[~candidate["ride_id"].isin(ids_seen_in_earlier_chunks)]  # whole year (SQLite)
-                hour_counts.update(candidate["started_at"].dt.floor("h").value_counts())     # start-hour attribution
+
+                # Milestone 1: count each ride on the date it starts
+                counts.update(candidate["date"].dt.strftime("%Y-%m-%d").value_counts().to_dict())
+                # Milestone 2: count each ride in the clock hour it starts
+                hour_counts.update(candidate["started_at"].dt.floor("h").value_counts().to_dict())
+                ```
+
+                *Milestone 1 daily table — one row per day, joined to NOAA daily weather*
+                (`load_weather` and `merge_daily` in `src/pipeline.py`):
+
+                ```python
+                weather = noaa.rename(columns={"PRCP": "prcp_mm", "TMAX": "tmax_c", "TMIN": "tmin_c"})
+                weather["date"] = pd.to_datetime(weather["DATE"]).dt.normalize()   # station USW00094728 only
+                weather["avg_temp_c"] = (weather["tmax_c"] + weather["tmin_c"]) / 2
+                calendar = pd.DataFrame({"date": pd.date_range("2024-01-01", "2024-12-31", freq="D")})
+                calendar = calendar.merge(daily, on="date", how="left", validate="one_to_one")
+                daily_table = calendar.merge(weather, on="date", how="left", validate="one_to_one")
+                ```
+
+                *Hourly weather — NOAA station reports put on the same hours as the rides*
+                (`build_lcd` in `src/fetch_hourly_weather.py`):
+
+                ```python
+                routine = raw[raw["REPORT_TYPE"].str.strip().eq("FM-15")]        # routine report near :51
+                obs_utc = (pd.to_datetime(routine["DATE"])                          # station clock is
+                           .dt.tz_localize("Etc/GMT+5").dt.tz_convert("UTC"))       # UTC-5 all year (no DST)
+                routine["hour_start_utc"] = obs_utc.dt.floor("h")                   # hh:51 report closes the hh:00 hour
+                text = routine["HourlyPrecipitation"].str.strip()
+                inches = pd.to_numeric(text.str.rstrip("s"), errors="coerce")       # "s" marks a suspect value
+                routine["precip_mm"] = (inches * 25.4).mask(text.str.upper().eq("T"), 0.0)  # trace -> 0; blank stays NaN
+                fahrenheit = pd.to_numeric(routine["HourlyDryBulbTemperature"].str.rstrip("s"), errors="coerce")
+                routine["temp_c"] = (fahrenheit - 32) * 5 / 9
+                hourly_weather = hour_grid().merge(                                 # the 8,784 elapsed hours
+                    routine.groupby("hour_start_utc", as_index=False).last(),
+                    on="hour_start_utc", how="left", validate="one_to_one")
                 ```
                 """
             ),
             mo.ui.table(validation, pagination=False, selection=None),
         ]
+    )
+    return
+
+
+@app.cell
+def _(dst_audit, hourly, mo, pd):
+    # One real ride, copied from the July 2024 archive (202407-citibike-tripdata_1.csv).
+    _ride = {
+        "ride_id": "78B373F0DCABB761",
+        "member_casual": "member",
+        "started_at": pd.Timestamp("2024-07-06 23:45:27"),
+        "ended_at": pd.Timestamp("2024-07-07 00:09:21"),
+    }
+    # The same rules as the pipeline, applied to this one ride.
+    _minutes = (_ride["ended_at"] - _ride["started_at"]).total_seconds() / 60
+    _kept = _ride["ended_at"] > _ride["started_at"]
+    _start_hour = _ride["started_at"].floor("h")
+    _end_hour = _ride["ended_at"].floor("h")
+    _local_naive = hourly["hour_start_local"].dt.tz_localize(None)
+    _rides_start_hour = int(hourly.loc[_local_naive == _start_hour, "hourly_rides"].iloc[0])
+    _rides_end_hour = int(hourly.loc[_local_naive == _end_hour, "hourly_rides"].iloc[0])
+    _cross = int(pd.to_numeric(dst_audit, errors="coerce")["valid_cross_midnight_rides"])
+    mo.md(
+        f"""
+        **Worked example: a ride that crosses midnight.** Ride `{_ride['ride_id']}` (a
+        {_ride['member_casual']}) started at **{_ride['started_at']:%Y-%m-%d %H:%M}** and ended at
+        **{_ride['ended_at']:%Y-%m-%d %H:%M}**, {_minutes:.0f} minutes later on the next day.
+
+        - Its end is after its start (positive duration: **{_kept}**), so it is a valid ride
+          and is kept. Only rides that *end before they start* are dropped.
+        - It is counted **once**, at its start: in the hour **{_start_hour:%Y-%m-%d %H:00}**
+          ({_rides_start_hour:,} rides in our table) and, in Milestone 1, on **{_start_hour.day} {_start_hour:%B}**.
+          It is not counted again in the {_end_hour:%H:00} hour of {_end_hour.day} {_end_hour:%B}
+          ({_rides_end_hour:,} rides).
+        - We use the start because the weather a rider sees when deciding to ride is the
+          weather at the start; the decision is what our questions are about.
+
+        In 2024, **{_cross:,}** kept rides cross midnight like this one.
+        """
     )
     return
 
